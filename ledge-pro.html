@@ -270,6 +270,19 @@
   </div>
 
   <div class="card">
+    <div class="section-header" style="margin-bottom:10px;">
+      <div class="card-title" style="margin:0;">Monthly Cash Flow</div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <button class="btn btn-ghost btn-sm" onclick="shiftMonth(-1)">‹</button>
+        <span id="dash-month-label" style="font-size:13px;font-weight:600;min-width:90px;text-align:center;"></span>
+        <button class="btn btn-ghost btn-sm" onclick="shiftMonth(1)">›</button>
+      </div>
+    </div>
+    <div class="grid-3" id="dash-month-cards" style="margin-bottom:10px;"></div>
+    <canvas id="monthly-chart" height="140"></canvas>
+  </div>
+
+  <div class="card">
     <div class="card-title">Goals Progress</div>
     <div id="dash-goals-list">
       <div class="empty"><div class="empty-icon">🎯</div>No goals set yet — add some in Goals tab</div>
@@ -448,6 +461,15 @@
   <div class="card">
     <div class="card-title">Super Growth Projection</div>
     <canvas id="super-chart" height="180"></canvas>
+  </div>
+
+  <div class="card">
+    <div class="section-header" style="margin-bottom:10px;">
+      <div class="card-title" style="margin:0;">Monthly Balance History</div>
+      <button class="btn btn-primary btn-sm" onclick="saveMonthlySnapshot()">📸 Log this month</button>
+    </div>
+    <canvas id="super-history-chart" height="140"></canvas>
+    <div id="super-history-table" style="margin-top:10px;"></div>
   </div>
 
   <div class="card">
@@ -659,8 +681,13 @@
   </div>
 
   <div class="card">
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+      <input id="txn-search" placeholder="Search…" style="flex:1;min-width:120px;" oninput="renderTransactions(true)">
+      <select id="txn-filter-month" onchange="renderTransactions(true)" style="width:130px;">
+        <option value="">All months</option>
+      </select>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-      <input id="txn-search" placeholder="Search…" style="flex:1;min-width:140px;" oninput="renderTransactions(true)">
       <select id="txn-filter-type" onchange="renderTransactions(true)" style="width:120px;">
         <option value="">All types</option>
         <option value="expense">Expense</option>
@@ -903,8 +930,12 @@ let state = {
   goals: [],
   deductions: [],
   nwHistory: [],
+  superHistory: [],   // { month: 'YYYY-MM', total: n }
   chatHistory: []
 };
+
+// Dashboard month offset (0 = current month, -1 = last month etc.)
+let dashMonthOffset = 0;
 
 function load() {
   const saved = localStorage.getItem('ledge-pro-v1');
@@ -1018,6 +1049,50 @@ function renderNetWorth() {
   }
 
   drawNWChart();
+}
+
+function saveMonthlySnapshot() {
+  const total = state.superFunds.reduce((s, f) => s + f.bal, 0);
+  if (!total) return toast('Add a super fund balance first');
+  const month = getMonthKey(0);
+  state.superHistory = (state.superHistory || []).filter(h => h.month !== month);
+  state.superHistory.push({ month, total });
+  state.superHistory.sort((a, b) => a.month.localeCompare(b.month));
+  autoNWSnapshot();
+  save();
+  drawSuperHistoryChart();
+  toast(`Snapshot saved for ${monthLabel(month)}`);
+}
+
+function drawSuperHistoryChart() {
+  const h = state.superHistory || [];
+  const canvas = document.getElementById('super-history-chart');
+  if (!canvas) return;
+  if (!h.length) {
+    const ctx = canvas.getContext('2d');
+    canvas.width = canvas.offsetWidth || 400;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#7c8299'; ctx.font='13px Inter,system-ui'; ctx.textAlign='center';
+    ctx.fillText('Tap "Log this month" to start tracking', canvas.width/2, canvas.height/2);
+    return;
+  }
+  drawLine('super-history-chart', h.map(x => monthLabel(x.month).split(' ')[0] + ' ' + x.month.slice(2,4)), [{ data: h.map(x => x.total), color: '#fb923c' }]);
+
+  // Table
+  const tbl = document.getElementById('super-history-table');
+  if (!tbl) return;
+  tbl.innerHTML = `<table class="tbl">
+    <thead><tr><th>Month</th><th>Balance</th><th>Change</th></tr></thead>
+    <tbody>${[...h].reverse().map((x, i, arr) => {
+      const prev = arr[i+1];
+      const change = prev ? x.total - prev.total : null;
+      return `<tr>
+        <td>${monthLabel(x.month)}</td>
+        <td style="font-family:var(--mono);font-weight:600;" class="orange">${fmt(x.total)}</td>
+        <td style="font-family:var(--mono);" class="${change===null?'':change>=0?'green':'red'}">${change===null?'—':(change>=0?'+':'')+fmt(change)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
 }
 
 function snapshotNetWorth() {
@@ -1325,6 +1400,7 @@ function addTransaction() {
   const account = document.getElementById('txn-account').value.trim();
   if (!desc || !amount) return toast('Enter description and amount');
   state.transactions.unshift({ id: Date.now(), date, desc, amount, type, cat, account });
+  autoNWSnapshot();
   save();
   document.getElementById('txn-desc').value = '';
   document.getElementById('txn-amount').value = '';
@@ -1425,6 +1501,7 @@ function importCSV(event) {
       imported++;
     });
 
+    autoNWSnapshot();
     save(); renderTransactions(); renderDashboard();
     toast(`Imported ${imported} transactions${skipped ? ` (${skipped} skipped)` : ''}`);
   };
@@ -1441,6 +1518,17 @@ function renderTransactions(resetPage = false) {
   const typeF = document.getElementById('txn-filter-type')?.value || '';
   const catF = document.getElementById('txn-filter-cat')?.value || '';
 
+  const monthF = document.getElementById('txn-filter-month')?.value || '';
+
+  // Populate month filter
+  const months = [...new Set(state.transactions.map(t => t.date?.slice(0,7)).filter(Boolean))].sort().reverse();
+  const monthSel = document.getElementById('txn-filter-month');
+  const curMonth = monthSel?.value || '';
+  if (monthSel) {
+    monthSel.innerHTML = '<option value="">All months</option>' +
+      months.map(m => `<option value="${m}" ${m===curMonth?'selected':''}>${monthLabel(m)}</option>`).join('');
+  }
+
   // Populate category filter
   const cats = [...new Set(state.transactions.map(t => t.cat))].sort();
   const catSel = document.getElementById('txn-filter-cat');
@@ -1451,6 +1539,7 @@ function renderTransactions(resetPage = false) {
     if (search && !t.desc.toLowerCase().includes(search) && !t.cat.toLowerCase().includes(search)) return false;
     if (typeF && t.type !== typeF) return false;
     if (catF && t.cat !== catF) return false;
+    if (monthF && (!t.date || !t.date.startsWith(monthF))) return false;
     return true;
   });
 
@@ -1622,6 +1711,45 @@ function renderGoals() {
 // ══════════════════════════════════════════════
 //  DASHBOARD
 // ══════════════════════════════════════════════
+
+function getMonthKey(offset = 0) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+function monthLabel(key) {
+  const [y, m] = key.split('-');
+  return new Date(+y, +m-1, 1).toLocaleString('en-AU', { month: 'short', year: 'numeric' });
+}
+
+function shiftMonth(dir) {
+  dashMonthOffset += dir;
+  // Don't go into the future
+  if (dashMonthOffset > 0) dashMonthOffset = 0;
+  renderDashboard();
+}
+
+function getMonthTotals(monthKey) {
+  const txns = state.transactions.filter(t => t.date && t.date.startsWith(monthKey));
+  const income  = txns.filter(t => t.type === 'income').reduce((s,t) => s+t.amount, 0);
+  const expense = txns.filter(t => t.type === 'expense').reduce((s,t) => s+t.amount, 0);
+  return { income, expense, net: income - expense, txns };
+}
+
+function autoNWSnapshot() {
+  // Auto-save a net worth snapshot for the current month when transactions are added/updated
+  const totalAssets = state.assets.reduce((s, a) => s + a.value, 0);
+  const totalLiab   = state.liabilities.reduce((s, l) => s + l.value, 0);
+  const nw = totalAssets - totalLiab;
+  if (nw === 0) return;
+  const key = getMonthKey(0).slice(0, 7); // YYYY-MM
+  const today = new Date().toISOString().split('T')[0];
+  state.nwHistory = state.nwHistory.filter(h => h.date.slice(0,7) !== key);
+  state.nwHistory.push({ date: today, nw });
+  state.nwHistory.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function renderDashboard() {
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -1629,10 +1757,10 @@ function renderDashboard() {
   document.getElementById('dash-greeting').textContent = greet + name;
 
   const totalAssets = state.assets.reduce((s, a) => s + a.value, 0);
-  const totalLiab = state.liabilities.reduce((s, l) => s + l.value, 0);
+  const totalLiab   = state.liabilities.reduce((s, l) => s + l.value, 0);
   const nw = totalAssets - totalLiab;
   document.getElementById('dash-networth').textContent = fmt(nw);
-  document.getElementById('dash-assets').textContent = fmt(totalAssets);
+  document.getElementById('dash-assets').textContent   = fmt(totalAssets);
   document.getElementById('dash-liabilities').textContent = fmt(totalLiab);
 
   const cash = state.assets.filter(a => a.cat === 'Cash / Savings').reduce((s, a) => s + a.value, 0);
@@ -1645,7 +1773,19 @@ function renderDashboard() {
   const taxEst = calcAusTax(annualGross);
   const netMonthly = (annualGross - taxEst.total) / 12;
   document.getElementById('dash-income').textContent = fmt(netMonthly);
-  document.getElementById('dash-tax').textContent = fmt(taxEst.total);
+  document.getElementById('dash-tax').textContent    = fmt(taxEst.total);
+
+  // ── Monthly cash flow ──
+  const monthKey = getMonthKey(dashMonthOffset);
+  document.getElementById('dash-month-label').textContent = monthLabel(monthKey);
+  const { income, expense, net } = getMonthTotals(monthKey);
+  document.getElementById('dash-month-cards').innerHTML = `
+    <div class="stat"><div class="stat-label">Income</div><div class="stat-value green" style="font-size:18px;">${fmt(income)}</div></div>
+    <div class="stat"><div class="stat-label">Expenses</div><div class="stat-value red" style="font-size:18px;">${fmt(expense)}</div></div>
+    <div class="stat"><div class="stat-label">Net</div><div class="stat-value ${net>=0?'green':'red'}" style="font-size:18px;">${fmt(net)}</div></div>`;
+
+  // Rolling 6-month bar chart
+  drawMonthlyCashFlow();
 
   // Goals on dashboard
   const dashGoals = document.getElementById('dash-goals-list');
@@ -1665,12 +1805,14 @@ function renderDashboard() {
     }).join('');
   }
 
-  // Recent transactions
+  // Recent transactions for selected month
   const recentEl = document.getElementById('dash-recent-txns');
-  if (!state.transactions.length) {
+  const monthTxns = getMonthTotals(monthKey).txns;
+  const displayTxns = monthTxns.length ? monthTxns.slice(0, 5) : state.transactions.slice(0, 5);
+  if (!displayTxns.length) {
     recentEl.innerHTML = '<div class="empty"><div class="empty-icon">💳</div>No transactions yet</div>';
   } else {
-    recentEl.innerHTML = state.transactions.slice(0, 5).map(t => `
+    recentEl.innerHTML = displayTxns.map(t => `
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(42,47,69,.5);">
         <div>
           <div style="font-size:13px;">${t.desc}</div>
@@ -1684,6 +1826,77 @@ function renderDashboard() {
   const now = new Date();
   const fyEnd = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
   document.getElementById('fy-badge').textContent = `FY ${fyEnd-1}–${String(fyEnd).slice(-2)}`;
+}
+
+function drawMonthlyCashFlow() {
+  // Build last 12 months of data
+  const months = Array.from({length: 12}, (_, i) => getMonthKey(i - 11));
+  const labels  = months.map(m => monthLabel(m).split(' ')[0]); // just "Jan", "Feb" etc
+  const incomes  = months.map(m => getMonthTotals(m).income);
+  const expenses = months.map(m => getMonthTotals(m).expense);
+
+  const canvas = document.getElementById('monthly-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 400;
+  const H = canvas.height;
+  canvas.width = W;
+  ctx.clearRect(0, 0, W, H);
+
+  const hasData = incomes.some(v=>v>0) || expenses.some(v=>v>0);
+  if (!hasData) {
+    ctx.fillStyle = '#7c8299'; ctx.font = '13px Inter,system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('No transaction data yet', W/2, H/2); return;
+  }
+
+  const pad = { top: 10, right: 10, bottom: 30, left: 60 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+  const maxV = Math.max(...incomes, ...expenses) * 1.15 || 1;
+  const barW = (cw / months.length) * 0.35;
+  const groupW = cw / months.length;
+
+  // Grid lines
+  [0, 0.5, 1].forEach(t => {
+    const y = pad.top + ch * (1 - t);
+    ctx.strokeStyle = '#2a2f45'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#7c8299'; ctx.font = '10px Inter,system-ui'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(maxV * t), pad.left - 4, y + 3);
+  });
+
+  months.forEach((m, i) => {
+    const cx = pad.left + i * groupW + groupW / 2;
+    const incH = (incomes[i] / maxV) * ch;
+    const expH = (expenses[i] / maxV) * ch;
+
+    // Income bar
+    ctx.fillStyle = '#4ade8066';
+    ctx.fillRect(cx - barW - 1, pad.top + ch - incH, barW, incH);
+    // Expense bar
+    ctx.fillStyle = '#f8717166';
+    ctx.fillRect(cx + 1, pad.top + ch - expH, barW, expH);
+
+    // Highlight selected month
+    const isSelected = m === getMonthKey(dashMonthOffset);
+    if (isSelected) {
+      ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx - barW - 1, pad.top, barW * 2 + 2, ch);
+    }
+
+    // Label
+    ctx.fillStyle = isSelected ? '#e8eaf0' : '#7c8299';
+    ctx.font = isSelected ? 'bold 10px Inter,system-ui' : '10px Inter,system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(labels[i], cx, H - 6);
+  });
+
+  // Legend
+  ctx.fillStyle = '#4ade80'; ctx.fillRect(W - 110, 8, 10, 10);
+  ctx.fillStyle = '#f87171'; ctx.fillRect(W - 60, 8, 10, 10);
+  ctx.fillStyle = '#7c8299'; ctx.font = '10px Inter,system-ui'; ctx.textAlign = 'left';
+  ctx.fillText('Income', W - 98, 17);
+  ctx.fillText('Exp', W - 48, 17);
 }
 
 // ══════════════════════════════════════════════
@@ -1975,6 +2188,7 @@ function refreshAll() {
   renderTransactions();
   renderDeductions();
   renderChat();
+  drawSuperHistoryChart();
   loadSettingsForm();
 }
 
