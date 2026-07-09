@@ -496,7 +496,11 @@
 <div id="page-tax" class="page">
   <div class="section-header">
     <div class="section-title">Tax Estimator</div>
-    <div class="financial-year-badge">ATO FY 2025–26</div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button class="btn btn-ghost btn-sm" onclick="shiftFY(-1)">‹</button>
+      <div class="financial-year-badge" id="fy-badge-tax">ATO FY 2025–26</div>
+      <button class="btn btn-ghost btn-sm" id="fy-next-btn" onclick="shiftFY(1)">›</button>
+    </div>
   </div>
 
   <div class="card">
@@ -1235,40 +1239,202 @@ function calcSG() {
 }
 
 // ══════════════════════════════════════════════
-//  TAX (ATO FY 2025-26)
+//  TAX — MULTI FINANCIAL YEAR
 // ══════════════════════════════════════════════
-function calcAusTax(income) {
-  // 2025-26 brackets
-  const brackets = [
-    { min: 0,       max: 18200,  rate: 0,    base: 0 },
-    { min: 18201,   max: 45000,  rate: 0.19, base: 0 },
-    { min: 45001,   max: 120000, rate: 0.325,base: 5092 },
-    { min: 120001,  max: 180000, rate: 0.37, base: 29467 },
-    { min: 180001,  max: Infinity,rate: 0.45, base: 51667 }
-  ];
 
-  let tax = 0;
-  let bracket = null;
-  for (const b of brackets) {
+// fyOffset: 0 = current FY (2026-27), -1 = 2025-26, -2 = 2024-25 etc.
+let fyOffset = 0;
+
+function currentFYEnd() {
+  // Base FY end year is 2027 (FY 2026-27)
+  return 2027 + fyOffset;
+}
+
+function fyLabel(offset = fyOffset) {
+  const end = 2027 + offset;
+  return `FY ${end-1}–${String(end).slice(-2)}`;
+}
+
+function shiftFY(dir) {
+  const newOffset = fyOffset + dir;
+  // Don't go before 2018-19 or past current FY
+  if (newOffset > 0 || newOffset < -8) return;
+  fyOffset = newOffset;
+  updateFYUI();
+  calcTax();
+}
+
+function updateFYUI() {
+  const label = fyLabel();
+  const badge = document.getElementById('fy-badge-tax');
+  const dashBadge = document.getElementById('fy-badge');
+  if (badge) badge.textContent = `ATO ${label}`;
+  if (dashBadge) {
+    const now = new Date();
+    const fyEnd = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+    dashBadge.textContent = `FY ${fyEnd-1}–${String(fyEnd).slice(-2)}`;
+  }
+  // Disable next button if at current FY
+  const nextBtn = document.getElementById('fy-next-btn');
+  if (nextBtn) nextBtn.disabled = fyOffset >= 0;
+  // Update SG cap label
+  const sgSub = document.getElementById('sg-concessional-cap');
+  if (sgSub) sgSub.textContent = `Concessional cap: ${fmt(getFYRules().concCap)} / yr`;
+}
+
+function getFYRules(offset = fyOffset) {
+  const end = 2027 + offset;
+  // Bracket data keyed by FY end year
+  const rules = {
+    2019: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:37000, rate:0.19, base:0 },
+        { min:37001, max:90000, rate:0.325, base:3572 },
+        { min:90001, max:180000, rate:0.37, base:20797 },
+        { min:180001, max:Infinity, rate:0.45, base:54097 }
+      ],
+      litoMax:445, litoPhase1End:37000, litoPhase1Rate:0,
+      litoPhase2Start:37000, litoPhase2End:66667, litoPhase2Rate:0.015,
+      lmito:0, medicareThreshold:21980, sgRate:9.5, concCap:25000,
+      hecsMin:51957
+    },
+    2020: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:37000, rate:0.19, base:0 },
+        { min:37001, max:90000, rate:0.325, base:3572 },
+        { min:90001, max:180000, rate:0.37, base:20797 },
+        { min:180001, max:Infinity, rate:0.45, base:54097 }
+      ],
+      litoMax:445, litoPhase2Start:37000, litoPhase2End:66667, litoPhase2Rate:0.015,
+      lmito:1080, medicareThreshold:22801, sgRate:9.5, concCap:25000, hecsMin:45881
+    },
+    2021: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:37000, rate:0.19, base:0 },
+        { min:37001, max:90000, rate:0.325, base:3572 },
+        { min:90001, max:180000, rate:0.37, base:20797 },
+        { min:180001, max:Infinity, rate:0.45, base:54097 }
+      ],
+      litoMax:445, litoPhase2Start:37000, litoPhase2End:66667, litoPhase2Rate:0.015,
+      lmito:1080, medicareThreshold:23226, sgRate:9.5, concCap:27500, hecsMin:46620
+    },
+    2022: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:37000, rate:0.19, base:0 },
+        { min:37001, max:90000, rate:0.325, base:3572 },
+        { min:90001, max:180000, rate:0.37, base:20797 },
+        { min:180001, max:Infinity, rate:0.45, base:54097 }
+      ],
+      litoMax:700, litoPhase2Start:37500, litoPhase2End:45000, litoPhase2Rate:0.05,
+      litoPhase3Start:45000, litoPhase3End:66667, litoPhase3Rate:0.015,
+      lmito:1500, medicareThreshold:23365, sgRate:10, concCap:27500, hecsMin:47014
+    },
+    2023: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:45000, rate:0.19, base:0 },
+        { min:45001, max:120000, rate:0.325, base:5092 },
+        { min:120001, max:180000, rate:0.37, base:29467 },
+        { min:180001, max:Infinity, rate:0.45, base:51667 }
+      ],
+      litoMax:700, litoPhase2Start:37500, litoPhase2End:45000, litoPhase2Rate:0.05,
+      litoPhase3Start:45000, litoPhase3End:66667, litoPhase3Rate:0.015,
+      lmito:0, medicareThreshold:24276, sgRate:10.5, concCap:27500, hecsMin:48361
+    },
+    2024: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:45000, rate:0.19, base:0 },
+        { min:45001, max:120000, rate:0.325, base:5092 },
+        { min:120001, max:180000, rate:0.37, base:29467 },
+        { min:180001, max:Infinity, rate:0.45, base:51667 }
+      ],
+      litoMax:700, litoPhase2Start:37500, litoPhase2End:45000, litoPhase2Rate:0.05,
+      litoPhase3Start:45000, litoPhase3End:66667, litoPhase3Rate:0.015,
+      lmito:0, medicareThreshold:26000, sgRate:11, concCap:27500, hecsMin:51550
+    },
+    2025: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:45000, rate:0.19, base:0 },
+        { min:45001, max:135000, rate:0.30, base:5092 },
+        { min:135001, max:190000, rate:0.37, base:36342 },
+        { min:190001, max:Infinity, rate:0.45, base:56742 }
+      ],
+      litoMax:700, litoPhase2Start:37500, litoPhase2End:45000, litoPhase2Rate:0.05,
+      litoPhase3Start:45000, litoPhase3End:66667, litoPhase3Rate:0.015,
+      lmito:0, medicareThreshold:26000, sgRate:11.5, concCap:30000, hecsMin:54435
+    },
+    2026: {
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:45000, rate:0.19, base:0 },
+        { min:45001, max:120000, rate:0.325, base:5092 },
+        { min:120001, max:180000, rate:0.37, base:29467 },
+        { min:180001, max:Infinity, rate:0.45, base:51667 }
+      ],
+      litoMax:700, litoPhase2Start:37500, litoPhase2End:45000, litoPhase2Rate:0.05,
+      litoPhase3Start:45000, litoPhase3End:66667, litoPhase3Rate:0.015,
+      lmito:0, medicareThreshold:26000, sgRate:11.5, concCap:30000, hecsMin:54435
+    },
+    2027: {
+      // FY 2026-27 — SG rises to 12%, brackets unchanged from 2025-26
+      // HECS threshold and concessional cap figures per ATO indexation estimates
+      brackets: [
+        { min:0, max:18200, rate:0, base:0 },
+        { min:18201, max:45000, rate:0.19, base:0 },
+        { min:45001, max:120000, rate:0.325, base:5092 },
+        { min:120001, max:180000, rate:0.37, base:29467 },
+        { min:180001, max:Infinity, rate:0.45, base:51667 }
+      ],
+      litoMax:700, litoPhase2Start:37500, litoPhase2End:45000, litoPhase2Rate:0.05,
+      litoPhase3Start:45000, litoPhase3End:66667, litoPhase3Rate:0.015,
+      lmito:0, medicareThreshold:26000, sgRate:12, concCap:30000, hecsMin:56272
+    }
+  };
+  return rules[end] || rules[2027];
+}
+
+function calcAusTax(income, offset = fyOffset) {
+  const fy = getFYRules(offset);
+
+  let tax = 0, bracket = null;
+  for (const b of fy.brackets) {
     if (income > b.min) {
       bracket = b;
-      const taxable = Math.min(income, b.max) - b.min;
-      tax = b.base + taxable * b.rate;
+      tax = b.base + (Math.min(income, b.max) - b.min) * b.rate;
     }
   }
 
   // LITO
   let lito = 0;
-  if (income <= 37500) lito = 700;
-  else if (income <= 45000) lito = 700 - (income - 37500) * 0.05;
-  else if (income <= 66667) lito = 325 - (income - 45000) * 0.015;
+  const litoMax = fy.litoMax || 700;
+  if (income <= (fy.litoPhase2Start || 37500)) {
+    lito = litoMax;
+  } else if (income <= (fy.litoPhase2End || 45000)) {
+    lito = litoMax - (income - (fy.litoPhase2Start || 37500)) * (fy.litoPhase2Rate || 0.05);
+  } else if (fy.litoPhase3End && income <= fy.litoPhase3End) {
+    lito = (fy.litoPhase3Start ? litoMax * 0.464 : 325) - (income - (fy.litoPhase3Start || 45000)) * (fy.litoPhase3Rate || 0.015);
+  }
 
-  // LMITO removed from 2022-23 onwards
+  const lmito = fy.lmito || 0;
+  const medicare = income > (fy.medicareThreshold || 26000) ? income * 0.02 : 0;
+  const gross = Math.max(0, tax);
+  const litoFinal = Math.max(0, Math.min(lito, litoMax));
 
-  // Medicare levy 2%
-  const medicare = income > 26000 ? income * 0.02 : 0;
-
-  return { gross: Math.max(0, tax), lito: Math.max(0, lito), medicare, total: Math.max(0, tax) - Math.max(0, lito) + medicare, bracket };
+  return {
+    gross,
+    lito: litoFinal,
+    lmito,
+    medicare,
+    total: Math.max(0, gross - litoFinal - lmito + medicare),
+    bracket,
+    fy
+  };
 }
 
 function calcTax() {
@@ -1281,23 +1447,24 @@ function calcTax() {
   document.getElementById('tax-result').style.display = 'block';
   document.getElementById('tax-placeholder').style.display = 'none';
 
-  const deductWork = parseFloat(document.getElementById('tax-deduct-work').value) || 0;
+  const deductWork  = parseFloat(document.getElementById('tax-deduct-work').value) || 0;
   const deductOther = parseFloat(document.getElementById('tax-deduct-other').value) || 0;
-  const withheld = parseFloat(document.getElementById('tax-withheld').value) || 0;
-  const hasHECS = document.getElementById('tax-hecs').value === 'yes';
+  const withheld    = parseFloat(document.getElementById('tax-withheld').value) || 0;
+  const hasHECS     = document.getElementById('tax-hecs').value === 'yes';
 
   const taxableIncome = Math.max(0, income - deductWork - deductOther);
-  const t = calcAusTax(taxableIncome);
+  const t   = calcAusTax(taxableIncome);
+  const fy  = t.fy;
 
-  document.getElementById('tax-gross').textContent = fmt(t.gross);
-  document.getElementById('tax-lito').textContent = fmt(t.lito);
+  document.getElementById('tax-gross').textContent    = fmt(t.gross);
+  document.getElementById('tax-lito').textContent     = fmt(t.lito + t.lmito);
   document.getElementById('tax-medicare').textContent = fmt(t.medicare);
 
-  // HECS repayment rates 2025-26
+  // HECS repayment — use FY-appropriate threshold
   let hecsAmt = 0;
-  if (hasHECS && income >= 54435) {
+  if (hasHECS && income >= (fy.hecsMin || 54435)) {
     const hecsRates = [
-      [54435, 57538, 0.01],[57539, 60991, 0.02],[60992, 64650, 0.025],
+      [fy.hecsMin||54435, 57538, 0.01],[57539, 60991, 0.02],[60992, 64650, 0.025],
       [64651, 68530, 0.03],[68531, 72663, 0.035],[72664, 77076, 0.04],
       [77077, 81787, 0.045],[81788, 86822, 0.05],[86823, 92214, 0.055],
       [92215, 97997, 0.06],[97998, 104226, 0.065],[104227, 110958, 0.07],
@@ -1313,41 +1480,43 @@ function calcTax() {
   const totalTax = t.total + hecsAmt;
   const netResult = withheld - totalTax;
   const resultEl = document.getElementById('tax-net-result');
-  const labelEl = document.getElementById('tax-net-label');
+  const labelEl  = document.getElementById('tax-net-label');
   resultEl.textContent = fmt(Math.abs(netResult));
-  if (netResult > 0) { resultEl.className = 'stat-value green'; labelEl.textContent = 'Estimated refund 🎉'; }
-  else if (netResult < 0) { resultEl.className = 'stat-value red'; labelEl.textContent = 'Estimated amount owed'; }
-  else { resultEl.className = 'stat-value'; labelEl.textContent = 'Roughly square with ATO'; }
+  if (netResult > 0)      { resultEl.className = 'stat-value green'; labelEl.textContent = 'Estimated refund 🎉'; }
+  else if (netResult < 0) { resultEl.className = 'stat-value red';   labelEl.textContent = 'Estimated amount owed'; }
+  else                    { resultEl.className = 'stat-value';        labelEl.textContent = 'Roughly square with ATO'; }
 
   const effRate = taxableIncome > 0 ? ((t.gross / taxableIncome) * 100).toFixed(1) : 0;
-  document.getElementById('tax-eff-rate').textContent = effRate + '%';
+  document.getElementById('tax-eff-rate').textContent    = effRate + '%';
   document.getElementById('tax-bracket-label').textContent = t.bracket ? `Marginal rate: ${(t.bracket.rate * 100).toFixed(0)}%` : '';
 
-  // Bracket table
-  const brackets2526 = [
-    { label: '$0 – $18,200', rate: '0%' },
-    { label: '$18,201 – $45,000', rate: '19%' },
-    { label: '$45,001 – $120,000', rate: '32.5%' },
-    { label: '$120,001 – $180,000', rate: '37%' },
-    { label: '$180,001+', rate: '45%' }
-  ];
+  // Bracket table — dynamic from FY rules
+  const bMins = fy.brackets.map(b => b.min);
+  const bMaxs = fy.brackets.map(b => b.max === Infinity ? Infinity : b.max);
+  const bLabels = fy.brackets.map((b, i) => {
+    const lo = i === 0 ? '$0' : '$' + b.min.toLocaleString('en-AU');
+    const hi = b.max === Infinity ? '+' : ' – $' + b.max.toLocaleString('en-AU');
+    return lo + (b.max === Infinity ? '+' : hi);
+  });
+
   document.getElementById('tax-brackets-table').innerHTML = `
     <table class="tbl">
-      <thead><tr><th>Bracket</th><th>Rate</th><th>Your income in bracket</th></tr></thead>
+      <thead><tr><th>Bracket (${fyLabel()})</th><th>Rate</th><th>Your income in bracket</th></tr></thead>
       <tbody>
-        ${brackets2526.map((b, i) => {
-          const mins = [0, 18200, 45000, 120000, 180000];
-          const maxs = [18200, 45000, 120000, 180000, Infinity];
-          const inBracket = Math.max(0, Math.min(taxableIncome, maxs[i]) - mins[i]);
-          const active = taxableIncome > mins[i];
+        ${fy.brackets.map((b, i) => {
+          const inBracket = Math.max(0, Math.min(taxableIncome, bMaxs[i]) - bMins[i]);
+          const active = taxableIncome > bMins[i];
           return `<tr style="${active ? '' : 'opacity:.4'}">
-            <td>${b.label}</td>
-            <td><span class="tag" style="background:var(--surface2);color:var(--warn)">${b.rate}</span></td>
+            <td>${bLabels[i]}</td>
+            <td><span class="tag" style="background:var(--surface2);color:var(--warn)">${(b.rate*100).toFixed(b.rate===0?0:1).replace('.0','')}%</span></td>
             <td style="font-family:var(--mono)">${active ? fmt(inBracket) : '—'}</td>
           </tr>`;
         }).join('')}
       </tbody>
-    </table>`;
+    </table>
+    <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+      SG rate: ${fy.sgRate}% · Concessional super cap: ${fmt(fy.concCap)} · LITO max: ${fmt(fy.litoMax)}${fy.lmito ? ' · LMITO: ' + fmt(fy.lmito) : ''}
+    </div>`;
 }
 
 // ══════════════════════════════════════════════
@@ -2206,6 +2375,7 @@ function toast(msg) {
 load();
 // Set today's date on txn form
 document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
+updateFYUI();
 refreshAll();
 </script>
 </body>
